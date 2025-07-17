@@ -323,6 +323,7 @@ def gen_judgments(
         else:
             models = model_list
 
+        questions = [question for question in questions if question['question_id'] in model_answers[models[0]].keys()]
         for m in model_answers:
             for q in model_answers[m]:
                 model_answers[m][q]['choices'][0]['turns'][0] = re.sub(f"<think>.*?<\/think>", "", model_answers[m][q]['choices'][0]['turns'][0], flags=re.DOTALL).strip()
