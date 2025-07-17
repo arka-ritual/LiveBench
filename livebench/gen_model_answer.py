@@ -132,9 +132,10 @@ def get_model_answers(
             for j in range(len(question["turns"])):
                 qs = question["turns"][j]
                 conv.append_message(conv.roles[0], qs)
-                conv.append_message(
-                    conv.roles[1], None
-                )  # placeholder for model response
+                if not priveri:
+                    conv.append_message(
+                        conv.roles[1], None
+                    )  # placeholder for model response
                 prompt = conv.get_prompt()
                 input_ids = tokenizer([prompt]).input_ids
 
@@ -163,16 +164,17 @@ def get_model_answers(
                         schema = {
                             "type": "object",
                             "properties": {
-                                "response": {"type": "string"},
+                                "brief_thinking": {"type": "string"},
+                                "formatted_answer": {"type": "string"},
                                 "key": {"type": "string"}
                             },
-                            "required": ["response", "key"]
+                            "required": ["brief_thinking", "formatted_answer", "key"]
                         }
 
                         jsonformer = Jsonformer(model, tokenizer, schema, verifiable_prompt,
-                                                max_string_token_length=max_new_token, debug=False)
+                                                max_string_token_length=max_new_token, vanilla=True, debug=True)
                         response = jsonformer()
-                        output = response['response']
+                        output = response['formatted_answer']
                     else:
                         output_ids = model.generate(
                             torch.as_tensor(input_ids).cuda(),

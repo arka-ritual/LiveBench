@@ -93,7 +93,7 @@ def get_categories_tasks(bench_name: str):
 
     else:
         # specify a category or task
-        category_name = split_bench_name[1].split('_')[0]
+        category_name = split_bench_name[1].split('/')[0]
 
         categories = {category_name: get_hf_dataset(category_name)}
 
@@ -107,11 +107,11 @@ def get_categories_tasks(bench_name: str):
             tasks = {category_name: [task_name]}
 
     # This is a hack fix for now.
-    tasks = {'data_analysis': ['tablejoin', 'tablereformat', 'cta'],
-                'instruction_following': ['story_generation', 'summarize', 'simplify', 'paraphrase'],
-                'math': ['olympiad', 'AMPS_Hard', 'math_comp'],
-                'reasoning': ['zebra_puzzle', 'spatial'],
-                'language': ['connections']}
+    # tasks = {'data_analysis': ['tablejoin', 'tablereformat', 'cta'],
+    #             'instruction_following': ['story_generation', 'summarize', 'simplify', 'paraphrase'],
+    #             'math': ['olympiad', 'AMPS_Hard', 'math_comp'],
+    #             'reasoning': ['zebra_puzzle', 'spatial'],
+    #             'language': ['connections']}
     return categories, tasks
 
 
