@@ -7,6 +7,12 @@ python3 gen_model_answer.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fa
 import argparse
 import json
 import os
+
+TORCH_DYNAMO_ERRORING = True
+if TORCH_DYNAMO_ERRORING:
+    os.environ['TORCH_COMPILE_DISABLE'] = '1'
+    os.environ['TORCHINDUCTOR_DISABLE'] = '1'
+
 import random
 import time
 import glob
