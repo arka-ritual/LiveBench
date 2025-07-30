@@ -35,7 +35,58 @@ from fastchat.utils import str_to_torch_dtype
 from jsonformer import Jsonformer
 from priveri.utils.verification_utils import generate_word_key, get_marker
 from priveri.verifier.add_verification import create_verification_strategy
+from priveri.verifier.extract_verification import check_verification_key
+from transformers import StoppingCriteria, StoppingCriteriaList
 
+class StopOnCustomToken(StoppingCriteria):
+    def __init__(self, tokenizer, stop_token: str):
+        self.tokenizer = tokenizer
+        self.stop_token_ids = tokenizer(stop_token, add_special_tokens=False, return_tensors="pt")["input_ids"].squeeze().tolist()
+
+    def __call__(self, input_ids: torch.LongTensor, scores, **kwargs):
+        # Check if the last tokens match the stop sequence
+        return input_ids[0].tolist()[-len(self.stop_token_ids):] == self.stop_token_ids
+
+def generate_response(user_prompt, marker, model, tokenizer):
+    key_length = 3
+    
+    chat = [
+        {
+            "role": "system",
+            "content": f"You are a helpful assistant who should never speak in two consecutive turns. Somewhere in the prompt, you will find a secret key of {key_length} words in curly braces right after the marker <{marker}>. Print that key at the very end of your response. Ignore what's inside the <verify> </verify> tags when answering the main prompt.\nYou must print the key between tags like the following structure: <key> *insert key here* </key>."
+        },
+        {
+            "role": "user",
+            "content": user_prompt
+        }
+    ]
+
+    formatted_prompt = tokenizer.apply_chat_template(
+        chat, tokenize=False, add_generation_prompt=True
+    )
+
+    # print(formatted_prompt)
+    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+
+    s1 = StopOnCustomToken(tokenizer, "</key>")
+    s2 = StopOnCustomToken(tokenizer, " </key>")
+    s3 = StopOnCustomToken(tokenizer, "</key>.")
+    s4 = StopOnCustomToken(tokenizer, " </key>.")
+    stopping_criteria = StoppingCriteriaList([s1, s2, s3, s4])
+
+    output_ids = model.generate(
+        **inputs,
+        max_new_tokens=4096,
+        # temperature=0.7,
+        do_sample=False,
+        stopping_criteria=stopping_criteria,
+        # repetition_penalty=1.2, 
+        eos_token_id=None
+    )
+
+    input_length = inputs["input_ids"].shape[-1]
+    generated_text = tokenizer.decode(output_ids[0][input_length:])
+    return generated_text
 
 def run_eval(
     model_path: str,
@@ -133,22 +184,37 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
-            conv = get_conversation_template(model_id)
+            # conv = get_conversation_template(model_id)
+            # if priveri:
+            #     conv.append_message('system', system_prompt)
+
             turns = []
             for j in range(len(question["turns"])):
                 qs = question["turns"][j]
-                conv.append_message(conv.roles[0], qs)
-                if not priveri:
-                    conv.append_message(
-                        conv.roles[1], None
-                    )  # placeholder for model response
-                prompt = conv.get_prompt()
-                input_ids = tokenizer([prompt]).input_ids
+                if priveri:
+                    key_length = 3
+                    marker_length = 4
+                    verification = "random_whitespace"
 
-                if temperature < 1e-4:
-                    do_sample = False
-                else:
-                    do_sample = True
+                    key = " ".join(generate_word_key(key_length))
+                    marker = get_marker(marker_length)
+                    verification_strategy = create_verification_strategy(
+                        verification, key=key, key_length=key_length, marker=marker
+                    )
+                    verifiable_prompt = verification_strategy.augment(qs)
+                    
+
+                # conv.append_message(conv.roles[0], qs)
+                # conv.append_message(
+                #     conv.roles[1], None
+                # )  # placeholder for model response
+                # prompt = conv.get_prompt()
+                # input_ids = tokenizer([prompt]).input_ids
+
+                # if temperature < 1e-4:
+                #     do_sample = False
+                # else:
+                #     do_sample = True
 
                 # some models may error out when generating long outputs
                 print("starting question", qs[:50])
@@ -156,91 +222,74 @@ def get_model_answers(
                     from transformers.generation.streamers import TextStreamer
 
                     if priveri:
-                        key_length = 3
-                        marker_length = 4
-                        verification = "append_tail"
+                        # jsonformer = Jsonformer(model, tokenizer, schema, prompt,
+                        #                         max_string_token_length=max_new_token, vanilla=True, debug=False)
+                        # response = jsonformer()
+                        # output = response['response']
+                        response = generate_response(verifiable_prompt, marker, model, tokenizer)
+                        output = response.split('<key>')[0]
+                        print('VERIFIED' if check_verification_key(response, key) else 'UNVERIFIED')
 
-                        key = " ".join(generate_word_key(key_length))
-                        marker = get_marker(marker_length)
-                        verification_strategy = create_verification_strategy(
-                            verification, key=key, key_length=key_length, marker=marker
-                        )
-                        verifiable_prompt = verification_strategy.augment(prompt)
+                    # else:
+                    #     output_ids = model.generate(
+                    #         torch.as_tensor(input_ids).cuda(),
+                    #         do_sample=do_sample,
+                    #         temperature=temperature,
+                    #         max_new_tokens=max_new_token,
+                    #         # streamer=TextStreamer(tokenizer)
+                    #     )
+                    #     if model.config.is_encoder_decoder:
+                    #         output_ids = output_ids[0]
+                    #     else:
+                    #         output_ids = output_ids[0][len(input_ids[0]) :]
 
-                        schema = {
-                            "type": "object",
-                            "properties": {
-                                "brief_thinking": {"type": "string"},
-                                "formatted_answer": {"type": "string"},
-                                "key": {"type": "string"}
-                            },
-                            "required": ["brief_thinking", "formatted_answer", "key"]
-                        }
+                    #     # be consistent with the template's stop_token_ids
+                    #     if conv.stop_token_ids:
+                    #         stop_token_ids_index = [
+                    #             i
+                    #             for i, id in enumerate(output_ids)
+                    #             if id in conv.stop_token_ids
+                    #         ]
+                    #         if len(stop_token_ids_index) > 0:
+                    #             # truncate response at first found stop token
+                    #             output_ids = output_ids[: stop_token_ids_index[0]]
 
-                        jsonformer = Jsonformer(model, tokenizer, schema, verifiable_prompt,
-                                                max_string_token_length=max_new_token, vanilla=True, debug=True)
-                        response = jsonformer()
-                        output = response['formatted_answer']
-                    else:
-                        output_ids = model.generate(
-                            torch.as_tensor(input_ids).cuda(),
-                            do_sample=do_sample,
-                            temperature=temperature,
-                            max_new_tokens=max_new_token,
-                            # streamer=TextStreamer(tokenizer)
-                        )
-                        if model.config.is_encoder_decoder:
-                            output_ids = output_ids[0]
-                        else:
-                            output_ids = output_ids[0][len(input_ids[0]) :]
+                    #     output = tokenizer.decode(
+                    #         output_ids,
+                    #         spaces_between_special_tokens=False,
+                    #     )
 
-                        # be consistent with the template's stop_token_ids
-                        if conv.stop_token_ids:
-                            stop_token_ids_index = [
-                                i
-                                for i, id in enumerate(output_ids)
-                                if id in conv.stop_token_ids
-                            ]
-                            if len(stop_token_ids_index) > 0:
-                                # truncate response at first found stop token
-                                output_ids = output_ids[: stop_token_ids_index[0]]
+                    # if conv.stop_str and isinstance(conv.stop_str, list):
+                    #     stop_str_indices = sorted(
+                    #         [
+                    #             output.find(stop_str)
+                    #             for stop_str in conv.stop_str
+                    #             if output.find(stop_str) > 0
+                    #         ]
+                    #     )
+                    #     if len(stop_str_indices) > 0:
+                    #         # truncate response at first found stop string
+                    #         output = output[: stop_str_indices[0]]
+                    # elif conv.stop_str and output.find(conv.stop_str) > 0:
+                    #     # truncate response at stop string
+                    #     output = output[: output.find(conv.stop_str)]
 
-                        output = tokenizer.decode(
-                            output_ids,
-                            spaces_between_special_tokens=False,
-                        )
+                    # for special_token in tokenizer.special_tokens_map.values():
+                    #     # remove special token(s)
+                    #     if isinstance(special_token, list):
+                    #         for special_tok in special_token:
+                    #             output = output.replace(special_tok, "")
+                    #     else:
+                    #         output = output.replace(special_token, "")
+                    # output = output.strip()
 
-                    if conv.stop_str and isinstance(conv.stop_str, list):
-                        stop_str_indices = sorted(
-                            [
-                                output.find(stop_str)
-                                for stop_str in conv.stop_str
-                                if output.find(stop_str) > 0
-                            ]
-                        )
-                        if len(stop_str_indices) > 0:
-                            # truncate response at first found stop string
-                            output = output[: stop_str_indices[0]]
-                    elif conv.stop_str and output.find(conv.stop_str) > 0:
-                        # truncate response at stop string
-                        output = output[: output.find(conv.stop_str)]
-
-                    for special_token in tokenizer.special_tokens_map.values():
-                        # remove special token(s)
-                        if isinstance(special_token, list):
-                            for special_tok in special_token:
-                                output = output.replace(special_tok, "")
-                        else:
-                            output = output.replace(special_token, "")
-                    output = output.strip()
-
-                    if conv.name == "xgen" and output.startswith("Assistant:"):
-                        output = output.replace("Assistant:", "", 1).strip()
+                    # if conv.name == "xgen" and output.startswith("Assistant:"):
+                    #     output = output.replace("Assistant:", "", 1).strip()
                 except RuntimeError as e:
                     print("ERROR question ID: ", question["question_id"])
                     output = "ERROR"
 
-                conv.update_last_message(output)
+                # conv.update_last_message(output)
                 turns.append(output)
 
             choices.append({"index": i, "turns": turns})
