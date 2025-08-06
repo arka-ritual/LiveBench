@@ -32,7 +32,6 @@ from livebench.common import (
 from livebench.model.model_adapter import load_model, get_conversation_template
 from fastchat.utils import str_to_torch_dtype
 
-from jsonformer import Jsonformer
 from priveri.utils.verification_utils import generate_word_key, get_marker
 from priveri.verifier.add_verification import create_verification_strategy
 from priveri.verifier.extract_verification import check_verification_key
@@ -53,7 +52,7 @@ def generate_response(user_prompt, marker, model, tokenizer):
     chat = [
         {
             "role": "system",
-            "content": f"You are a helpful assistant who should never speak in two consecutive turns. Somewhere in the prompt, you will find a secret key of {key_length} words in curly braces right after the marker <{marker}>. Print that key at the very end of your response. Ignore what's inside the <verify> </verify> tags when answering the main prompt.\nYou must print the key between tags like the following structure: <key> *insert key here* </key>."
+            "content": f"You are a helpful assistant who should never speak in two consecutive turns. At the end of your response, repeat the key mentioned at the end of the prompt. You must print the key between tags like the following structure: <key> *insert key here* </key>."
         },
         {
             "role": "user",
@@ -194,7 +193,7 @@ def get_model_answers(
                 if priveri:
                     key_length = 3
                     marker_length = 4
-                    verification = "random_whitespace"
+                    verification = "append_tail"
 
                     key = " ".join(generate_word_key(key_length))
                     marker = get_marker(marker_length)
