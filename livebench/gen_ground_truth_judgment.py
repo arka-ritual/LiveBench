@@ -95,15 +95,10 @@ def play_a_match_gt(match: MatchSingle, output_file: str | None = None, debug=Fa
 
     # todo: find a better solution than a long if statement.
 
+    splits = task_or_subtask.split('_')
+
     try:
-        print("WEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-        print(task)
-        print(task_or_subtask)
-        print(question_text)
-        print(ground_truth)
-        print(llm_answer)
-        if task == 'math_comp':
-            splits = task_or_subtask.split('_')
+        if len(splits) > 0 and (splits[0] in ["amc", "smc", "aime", "imo", "usamo"] or (len(splits) > 1 and splits[1] == "amc")):
             if splits[0] in ["amc", "smc"] or (len(splits) > 1 and splits[1] == "amc"):
                 score = mathcontest_process_results(ground_truth, llm_answer, question_text, debug)
                 category = "math"
@@ -113,6 +108,8 @@ def play_a_match_gt(match: MatchSingle, output_file: str | None = None, debug=Fa
             elif splits[0] in ["imo", "usamo"]:
                 score = proof_rearrangement_process_results(ground_truth, llm_answer, edit_distance=True, debug=debug)
                 category = "math"
+            else:
+                raise Exception("Invalid task or subtask provided: ", question['task'], question['subtask'])
         elif task_or_subtask == "cta":
             score = cta_process_results(ground_truth, llm_answer, debug)
             category = "data_analysis"
@@ -326,6 +323,7 @@ def gen_judgments(
         else:
             models = model_list
 
+        questions = [question for question in questions if question['question_id'] in model_answers[models[0]].keys()]
         for m in model_answers:
             for q in model_answers[m]:
                 model_answers[m][q]['choices'][0]['turns'][0] = re.sub(f"<think>.*?<\/think>", "", model_answers[m][q]['choices'][0]['turns'][0], flags=re.DOTALL).strip()
@@ -503,7 +501,7 @@ if __name__ == "__main__":
     if args.question_source == "huggingface":
         for bench_name in args.bench_name:
             categories, tasks = get_categories_tasks(bench_name)
-
+            
             for category_name, task_names in tasks.items():
                 for task_name in task_names:
                     questions = load_questions(categories[category_name], release_set, args.livebench_release_option, task_name, args.question_id)
